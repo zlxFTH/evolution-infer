@@ -6,4 +6,4 @@ class GenerateRequest:
 
 @dataclass(frozen=True, slots=True)
 class GenerateResponse:
-    test: str
+    text: str
