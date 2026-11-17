@@ -10,13 +10,13 @@ def main():
 
     llm = LLM(
         model=str(model_path),
-        dtype="bfloat16",
-        tensor_parallel_size=1,
-        max_model_len=2048,
-        max_num_seqs=1,
-        gpu_memory_utilization=0.9,
-        enforce_eager=True,
-        limit_mm_per_prompt={"image": 0, "video": 0},
+        dtype="bfloat16", # 精度 bf16
+        tensor_parallel_size=1, # 张量并行度，大矩阵拆几个 gpu 
+        max_model_len=10240, # 单条序列总长度上限
+        max_num_seqs=1, # 每次处理 1 个序列
+        gpu_memory_utilization=0.9, # 显存预算为每张 GPU 总显存的 90%
+        enforce_eager=True, # 强制即时执行模式，关闭 torch.compile 和 CUDA Graph 优化
+        limit_mm_per_prompt={"image": 0, "video": 0}, # 文本输入
     )
 
     outputs = llm.chat(
