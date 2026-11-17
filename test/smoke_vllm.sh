@@ -1,0 +1,1 @@
+uv run python -u smoke_vllm.py

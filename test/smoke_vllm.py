@@ -26,12 +26,12 @@ def main():
             max_tokens=1024,
         ),
         chat_template_kwargs={"enable_thinking": False},
-    )
+    ) # outputs[0].outputs[0] 第一个请求的第一个候选回答
 
     print("\n")
     print(f"Prompt: {prompt}")
-    print(f"Response: {response}")
-    print(f"Stop reason: {}")
+    print(f"Response: {outputs[0].outputs[0].text}")
+    print(f"Stop reason: {outputs[0].outputs[0].finish_reason}")
 
 if __name__ == "__main__":
     main()
