@@ -114,4 +114,29 @@ class RMSNormGated(nn.Module):
         return (out * F.silu(gate.float())).to(x.dtype)
 
 class LinearAttention(nn.Module):
-    
+    def __init__(self):
+        super().__init__()
+
+        self.qk_dim = linear_num_kq_heads * linear_head_dim
+        self.v_dim = linear_num_v_heads * linear_head_dim
+        self.conv_dim = self.qk_dim * 2 + self.v_dim
+
+        self.in_proj_qkv = nn.Linear(hidden_size, self.conv_dim, bias=False)
+        self.in_proj_a = nn.Linear(hidden_size, linear_num_v_heads, bias=False)
+        self.in_proj_b = nn.Linear(hidden_size, linear_num_v_heads, bias=False)
+        self.in_proj_z = nn.Linear(hidden_size, self.v_dim, bias=False)
+
+        self.conv1d = nn.Conv1d(
+            
+            bias=False,
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        seq_len = x.shape[0]
+
+        qkv = self.in_proj_qkv(x)
+        z = self.in_proj_z(x).view(seq_len, linear_num_v_heads, linear_head_dim)
+        a = self.in_proj_a(x)
+        b = self.in_proj_b(x)
+
+        qkv = F.silu(self.conv1d(qkv.transpose()))
