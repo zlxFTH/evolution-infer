@@ -135,6 +135,11 @@ class LinearAttention(nn.Module):
             bias=False,
         )
 
+        self.dt_bias = nn.Parameter(torch.ones(linear_num_v_heads))
+        self.A_log = nn.Parameter(torch.zeros(linear_num_v_heads))
+        self.norm = RMSNormGated(linear_head_dim)
+        self.out_proj = nn.Linear(self.v_dim, hidden_size, bias=False)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         seq_len = x.shape[0]
 
@@ -149,3 +154,18 @@ class LinearAttention(nn.Module):
         q = q.reshape(seq_len, linear_num_kq_heads, -1)
         k = k.reshape(seq_len, linear_num_kq_heads, -1)
         v = v.reshape(seq_len, linear_num_v_heads, -1)
+
+        # 原地复制，不是拼接
+        q = q.repeat_interleave(3, dim=1)
+        k = k.repeat_interleave(3, dim=1)
+
+        # 下面全部用 float32
+        q = F.normalize(q.float(), p=2, dim=-1, eps=1e-6) * (linear_head_dim ** -0.5)
+        k = F.normalize(k.float(), p=2, dim=-1, eps=1e-6)
+        v = v.float()
+        # 这里和 transformer 的 Qwen3_5GatedDeltaNet 对齐，先 sigmoid 再转 float
+        beta = b.sigmoid().float()
+        g = -self.A_log.float().exp() * F.softplus(a.float() + self.dt_bias)
+
+        
+
