@@ -183,3 +183,32 @@ class LinearAttention(nn.Module):
         out = self.norm(out.reshape(-1, linear_head_dim), z.reshape(-1, linear_head_dim))
         return self.out_proj(out.reshape(seq_len, -1))
 
+class DecoderBlock(nn.Module):
+    def __init__(self, id: int):
+        super().__init__()
+
+        self.is_full = (id % 4 == 3)
+        if self.is_full:
+            self.self_attn = Attention()
+        else:
+            self.linear_attn = LinearAttention()
+
+        self.mlp = MLP()
+        self.input_layernorm = RMSNorm()
+        self.post_attention_layernorm = RMSNorm()
+
+    def forward(self, positions: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+        res = x
+        x = self.input_layernorm(x)
+        if self.is_full:
+            x = self.self_attn(positions, x)
+        else:
+            x = self.linear_attn(x)
+        x = res + x
+
+        res = x
+        x = self.post_attention_layernorm(x)
+        x = self.mlp(x)
+        x = res + x
+
+        return x
