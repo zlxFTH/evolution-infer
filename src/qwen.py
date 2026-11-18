@@ -187,7 +187,7 @@ class DecoderBlock(nn.Module):
     def __init__(self, id: int):
         super().__init__()
 
-        self.is_full = (id % 4 == 3)
+        self.is_full = (id % block == 3)
         if self.is_full:
             self.self_attn = Attention()
         else:
@@ -212,3 +212,25 @@ class DecoderBlock(nn.Module):
         x = res + x
 
         return x
+
+class Model(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.embed_tokens = nn.Embedding(vocab_size, hidden_size)
+        self.layers = nn.ModuleList([DecoderBlock(i) for i in range(num_hidden_layers)])
+        self.norm = RMSNorm()
+
+    def forward(self, positions: torch.Tensor, input_ids: torch.Tensor) -> torch.Tensor:
+        x = self.embed_tokens(input_ids)
+        for layer in self.layers:
+            x = layer(positions, x)
+        return self.norm(x)
+
+class LLM(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.model = Model()
+        self.lm_head = nn.Linear(hidden_size, vocab_size, bias=False)
+
+    def forward(self, positions: torch.Tensor, input_ids: torch.Tensor) -> torch.Tensor:
+        return self.lm_head(self.model(positions, input_ids))

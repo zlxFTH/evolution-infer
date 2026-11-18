@@ -13,6 +13,6 @@ linear_num_kq_heads = 16
 linear_num_v_heads = 48
 linear_head_dim = 128
 
-num_hidden_layers = 64
-full_attention_interval = 4
+block = 4
 vocab_size = 248320
+num_hidden_layers = 64
