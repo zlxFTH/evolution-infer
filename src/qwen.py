@@ -100,3 +100,17 @@ class Attention(nn.Module):
         out = out * torch.sigmoid(gate)
         return self.o_proj(out)
 
+class RMSNormGated(nn.Module):
+    def __init__(self, dim: int):
+        super().__init__()
+
+        self.eps = rms_norm_eps
+        self.weight = nn.Parameter(torch.zeros(dim)) # 支持多维度
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        xx = x.float()
+        rms = torch.rsqrt(xx.pow(2).mean(dim=-1, keepdim=True) + self.eps)
+        return (xx * rms * (1.0 + self.weight.float())).to(x.dtype)
+
+class LinearAttention(nn.Module):
+
