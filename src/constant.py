@@ -7,3 +7,13 @@ rotary_dim = 64
 num_heads = 24
 num_kv_heads = 4
 head_dim = 256
+
+linear_conv_kernel_dim = 4
+linear_num_k_heads = 16
+linear_head_k_dim = 128
+linear_num_v_heads = 48
+linear_head_v_dim = 128
+
+num_hidden_layers = 64
+full_attention_interval = 4
+vocab_size = 248320
