@@ -24,6 +24,7 @@ def load_model(model: nn.Module, path: str):
                 param.data.copy_(tensor)
                 loaded.add(para_name)
 
-    
+    all_para = {k for k, _ in model.named_parameters}
+    assert loaded == all_para
 
 
