@@ -68,11 +68,35 @@ class Attention(nn.Module):
         self.q_proj = nn.Linear(hidden_size, num_heads * head_dim * 2, bias=False)
         self.k_proj = nn.Linear(hidden_size, num_kv_heads * head_dim, bias=False)
         self.v_proj = nn.Linear(hidden_size, num_kv_heads * head_dim, bias=False)
+        self.o_proj = nn.Linear(num_heads * head_dim, hidden_size, bias=False)
 
         self.q_norm = RMSNorm(head_dim)
         self.k_norm = RMSNorm(head_dim)
         self.rope = RoPE()
 
     def forward(self, positions: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
-        
-        
+        seq_len = x.shape[0]
+
+        q, gate = torch.chunk(self.q_proj(x).view(seq_len, num_heads, head_dim * 2), 2, dim=-1)
+        gate = gate.reshape(seq_len, -1)
+        k = self.k_proj(x).view(seq_len, num_kv_heads, head_dim)
+        v = self.v_proj(x).view(seq_len, num_kv_heads, head_dim)
+
+        q = self.q_norm(q)
+        k = self.k_norm(k)
+        q, k = self.rope(positions, q, k)
+
+        q = torch.transpose(q, 0, 1).unsqueeze(0)
+        k = torch.transpose(k, 0, 1).unsqueeze(0)
+        v = torch.transpose(v, 0, 1).unsqueeze(0)
+
+        out = F.scaled_dot_product_attention(
+            q, k, v,
+            is_causal=True,
+            enable_gqa=True
+        )
+
+        out = out.squeeze(0).transpose(0, 1).reshape(seq_len, -1)
+        out = out * torch.sigmoid(gate)
+        return self.o_proj(out)
+
