@@ -2,11 +2,13 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
+from constant import *
+
 class RMSNorm(nn.Module):
-    def __init__(self, hidden_size: int, eps: float = 1e-6):
+    def __init__(self):
         super().__init__()
 
-        self.eps = eps
+        self.eps = rms_norm_eps
         self.weight = nn.Parameter(torch.zeros(hidden_size))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -15,7 +17,7 @@ class RMSNorm(nn.Module):
         return (xx * rms * (1.0 + self.weight.float())).to(x.dtype)
 
 class MLP(nn.Module):
-    def __init__(self, hidden_size: int = 5120, intermediate_size: int = 17408):
+    def __init__(self):
         super().__init__()
 
         self.gate_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
@@ -32,10 +34,9 @@ def rotate_half(x: torch.Tensor) -> torch.Tensor:
     return torch.cat((-x2, x1), dim=-1)
 
 class RoPE(nn.Module): 
-    def __init__(self, rotary_dim: int = 64, max_positions: int = 262144, base: float = 10000000.0):
+    def __init__(self):
         super().__init__()
 
-        self.rotary_dim = rotary_dim
         inv_freq = 1.0 / (base ** (torch.arange(0, rotary_dim, 2, dtype=torch.float32) / rotary_dim))
         t = torch.arange(max_positions, dtype=torch.float32)
         freq = torch.outer(t, inv_freq)
@@ -52,10 +53,15 @@ class RoPE(nn.Module):
         cos = self.cos_cached[positions].unsqueeze(1).to(q.dtype)
         sin = self.sin_cached[positions].unsqueeze(1).to(q.dtype)
 
-        q_rot, q_pass = q[..., : self.rotary_dim], q[..., self.rotary_dim :]
-        k_rot, k_pass = k[..., : self.rotary_dim], k[..., self.rotary_dim :]
+        q_rot, q_pass = q[..., : rotary_dim], q[..., rotary_dim :]
+        k_rot, k_pass = k[..., : rotary_dim], k[..., rotary_dim :]
 
         q_rot = q_rot * cos + rotate_half(q_rot) * sin
         k_rot = k_rot * cos + rotate_half(k_rot) * sin
 
         return torch.cat((q_rot, q_pass), dim=-1), torch.cat((k_rot, k_pass), dim=-1)
+
+# class Attention(nn.Module):
+#     def __init__(self, hidden_size: ):
+
+#     def forward():
