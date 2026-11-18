@@ -7,12 +7,12 @@ class RMSNorm(nn.Module):
         super().__init__()
 
         self.eps = eps
-        self.weight = nn.Parameter(torch.ones(hidden_size))
+        self.weight = nn.Parameter(torch.zeros(hidden_size))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         xx = x.float()
         rms = torch.rsqrt(xx.pow(2).mean(dim=-1, keepdim=True) + self.eps)
-        return (xx * rms).to(x.dtype) * self.weight
+        return (xx * rms * (1.0 + self.weight.float())).to(x.dtype)
 
 class MLP(nn.Module):
     def __init__(self, hidden_size: int = 5120, intermediate_size: int = 17408):
@@ -36,14 +36,14 @@ class RoPE(nn.Module):
         super().__init__()
 
         self.rotary_dim = rotary_dim
-        inv_freq = 1.0 / (base ** torch.arrange(0, rotary_dim, 2, dtype=torch.float32) / rotary_dim)
-        t = torch.arrange(max_positions, dtype=torch.float32)
+        inv_freq = 1.0 / (base ** (torch.arange(0, rotary_dim, 2, dtype=torch.float32) / rotary_dim))
+        t = torch.arange(max_positions, dtype=torch.float32)
         freq = torch.outer(t, inv_freq)
         emb = torch.cat((freq, freq), dim=-1)
 
         # persistent=False 不存进权重文件
         self.register_buffer("cos_cached", emb.cos(), persistent=False)
-        self.register_buffer("cos_cached", emb.sin(), persistent=False)
+        self.register_buffer("sin_cached", emb.sin(), persistent=False)
 
     # positions: [seq_len]
     # q: [seq_len, num_heads, head_dim]
