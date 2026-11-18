@@ -25,5 +25,3 @@ def load_model(model: nn.Module, path: str):
 
     all_para = {k for k, _ in model.named_parameters()}
     assert loaded == all_para
-
-
