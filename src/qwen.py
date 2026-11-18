@@ -5,11 +5,11 @@ import torch.nn.functional as F
 from constant import *
 
 class RMSNorm(nn.Module):
-    def __init__(self):
+    def __init__(self, dim: int = hidden_size):
         super().__init__()
 
         self.eps = rms_norm_eps
-        self.weight = nn.Parameter(torch.zeros(hidden_size))
+        self.weight = nn.Parameter(torch.zeros(dim)) # 支持多维度
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         xx = x.float()
@@ -61,7 +61,18 @@ class RoPE(nn.Module):
 
         return torch.cat((q_rot, q_pass), dim=-1), torch.cat((k_rot, k_pass), dim=-1)
 
-# class Attention(nn.Module):
-#     def __init__(self, hidden_size: ):
+class Attention(nn.Module):
+    def __init__(self):
+        super().__init__()
 
-#     def forward():
+        self.q_proj = nn.Linear(hidden_size, num_heads * head_dim * 2, bias=False)
+        self.k_proj = nn.Linear(hidden_size, num_kv_heads * head_dim, bias=False)
+        self.v_proj = nn.Linear(hidden_size, num_kv_heads * head_dim, bias=False)
+
+        self.q_norm = RMSNorm(head_dim)
+        self.k_norm = RMSNorm(head_dim)
+        self.rope = RoPE()
+
+    def forward(self, positions: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+        
+        
