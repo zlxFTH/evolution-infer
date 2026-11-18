@@ -167,5 +167,19 @@ class LinearAttention(nn.Module):
         beta = b.sigmoid().float()
         g = -self.A_log.float().exp() * F.softplus(a.float() + self.dt_bias)
 
-        
+        state = torch.zeros(
+            linear_num_v_heads, linear_head_dim, linear_head_dim,
+            dtype=torch.float32, device=x.device
+        )
+        out = torch.zeros_like(v)
+        for t in range(seq_len):
+            state = state * g[t].exp()[:, None, None]
+            kv_mem = (state * k[t][:, :, None]).sum(dim=1)
+            delta = (v[t] - kv_mem) * beta[t][:, None]
+            state = state + k[t][:, :, None] * delta[:, None, :]
+            out[t] = (state * q[t][:, :, None]).sum(dim=1)
+
+        out = out.to(x.dtype)
+        out = self.norm(out.reshape(-1, linear_head_dim), z.reshape(-1, linear_head_dim))
+        return self.out_proj(out.reshape(seq_len, -1))
 
