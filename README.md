@@ -1,6 +1,6 @@
 ## Todo
 
-- [ ] 基础 Baseline Qwen3.8 27b pytorch 实现
+- [x] Pytorch + nn 版 Qwen3.8 27b 推理，单次推理部分
 - [ ] 基础显存管理
 - [ ] 造数据
 - [ ] Benchmark
