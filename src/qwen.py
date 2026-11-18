@@ -127,7 +127,11 @@ class LinearAttention(nn.Module):
         self.in_proj_z = nn.Linear(hidden_size, self.v_dim, bias=False)
 
         self.conv1d = nn.Conv1d(
-            
+            in_channels=self.conv_dim,
+            out_channels=self.conv_dim,
+            kernel_size=linear_num_kernel,
+            groups=self.conv_dim,
+            padding=linear_num_kernel-1,
             bias=False,
         )
 
@@ -139,4 +143,9 @@ class LinearAttention(nn.Module):
         a = self.in_proj_a(x)
         b = self.in_proj_b(x)
 
-        qkv = F.silu(self.conv1d(qkv.transpose()))
+        qkv = F.silu(self.conv1d(qkv.transpose(0, 1))[:, : seq_len]).transpose(0, 1)
+
+        q, k, v = torch.split(qkv, [self.qk_dim, self.qk_dim, self.v_dim], dim=-1)
+        q = q.reshape(seq_len, linear_num_kq_heads, -1)
+        k = k.reshape(seq_len, linear_num_kq_heads, -1)
+        v = v.reshape(seq_len, linear_num_v_heads, -1)
