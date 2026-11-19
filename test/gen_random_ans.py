@@ -26,9 +26,8 @@ def main():
                 "logits": logits[0, -1].cpu(),
             })
 
-    out_path = data_dir / "ref_outputs.pt"
+    out_path = data_dir / "answers.pt"
     torch.save(outputs, out_path)
-    print(f"Saved {len(outputs)} ref outputs to {out_path}")
 
 if __name__ == "__main__":
     main()
