@@ -1,7 +1,7 @@
 ## Todo
 
 - [x] Pytorch + nn 版 Qwen3.8 27b 推理，单 token 推理
-- [ ] Pytorch + nn 版 Qwen3.8 27b 推理，单请求：KV Cache + 线性状态 Cache
+- [ ] Pytorch + nn 版 Qwen3.8 27b 推理，单请求 Prefill + Decode：Attn KV Cache + Linear Attn Cache
 - [ ] 造数据
 - [ ] Benchmark
 - [ ] 复现 DSpark Draft Model
