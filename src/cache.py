@@ -21,11 +21,28 @@ class Cache():
           self.recur_state[i] = torch.zeros(linear_num_v_heads, linear_head_dim, linear_head_dim,
                                             dtype=torch.float32)
 
-  def upd_attn_cache(self, i: int, k: torch.Tensor, v: torch.Tensor):
+  def upd_kv_cache(self, i: int, k: torch.Tensor, v: torch.Tensor):
     beg = self.seq_len
     end = beg + k.shape[0]
     self.k_cache[i][beg : end] = k
     self.v_cache[i][beg : end] = v
     return self.k_cache[i][: end], self.v_cache[i][: end]
 
-  def upd_linear_attn_cache(self, ):
+  def upd_conv_cache(self, i: int, qkv: torch.Tensor):
+    k_len = linear_num_kernel - 1
+    window = torch.cat([self.conv_state[i], qkv], dim=1)
+    self.conv_state[i].copy_(window[:, -k_len :])
+    return window # decode 的时候可以直接拿去卷积
+
+  def upd_recur_cache(self, i: int, state: torch.Tensor):
+    self.recur_state[i].copy_(state)
+
+  def reset(self):
+    self.seq_len = 0
+    for u in self.conv_state:
+      if u is not None:
+        u.zero_()
+    for u in self.recur_state:
+      if u is not None:
+        u.zero_()
+    
