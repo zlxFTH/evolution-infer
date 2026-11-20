@@ -7,8 +7,9 @@ class Cache():
     self.seq_len     = 0
     self.k_cache     = [None] * num_hidden_layers
     self.v_cache     = [None] * num_hidden_layers
-    self.conv_state  = [None] * num_hidden_layers # qkv
-    self.recur_state = [None] * num_hidden_layers # state
+    self.conv_state  = [None] * num_hidden_layers  # qkv
+    self.recur_state = [None] * num_hidden_layers  # state
+    self.is_prefill  = True
 
     conv_dim = linear_num_kq_heads * linear_head_dim * 2 + linear_num_v_heads * linear_head_dim
     with torch.device(device):
@@ -38,7 +39,8 @@ class Cache():
     self.recur_state[i].copy_(state)
 
   def reset(self):
-    self.seq_len = 0
+    self.seq_len    = 0
+    self.is_prefill = True
     for u in self.conv_state:
       if u is not None:
         u.zero_()

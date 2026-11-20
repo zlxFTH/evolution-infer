@@ -3,6 +3,7 @@ from torch import nn
 import torch.nn.functional as F
 
 from constant import *
+from cache import Cache
 
 class RMSNorm(nn.Module):
   def __init__(self, dim: int = hidden_size):
@@ -62,8 +63,10 @@ class RoPE(nn.Module):
     return torch.cat((q_rot, q_pass), dim=-1), torch.cat((k_rot, k_pass), dim=-1)
 
 class Attention(nn.Module):
-  def __init__(self):
+  def __init__(self, layer_id: int):
     super().__init__()
+
+    self.layer_id = layer_id
 
     self.q_proj = nn.Linear(hidden_size, num_heads * head_dim * 2, bias=False)
     self.k_proj = nn.Linear(hidden_size, num_kv_heads * head_dim, bias=False)
@@ -74,7 +77,7 @@ class Attention(nn.Module):
     self.k_norm = RMSNorm(head_dim)
     self.rope = RoPE()
 
-  def forward(self, positions: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+  def forward(self, positions: torch.Tensor, x: torch.Tensor, cache: Cache | None) -> torch.Tensor:
     seq_len = x.shape[0]
 
     q, gate = torch.chunk(self.q_proj(x).view(seq_len, num_heads, head_dim * 2), 2, dim=-1)
@@ -86,13 +89,16 @@ class Attention(nn.Module):
     k = self.k_norm(k)
     q, k = self.rope(positions, q, k)
 
+    if cache is not None:
+      k, v = cache.upd_kv_cache(self.layer_id, k, v)
+
     q = torch.transpose(q, 0, 1).unsqueeze(0)
     k = torch.transpose(k, 0, 1).unsqueeze(0)
     v = torch.transpose(v, 0, 1).unsqueeze(0)
 
     out = F.scaled_dot_product_attention(
       q, k, v,
-      is_causal=True,
+      is_causal=(True if cache is None else cache.is_prefill),
       enable_gqa=True
     )
 
@@ -114,17 +120,19 @@ class RMSNormGated(nn.Module):
     return (out * F.silu(gate.float())).to(x.dtype)
 
 class LinearAttention(nn.Module):
-  def __init__(self):
+  def __init__(self, layer_id: int):
     super().__init__()
 
-    self.qk_dim = linear_num_kq_heads * linear_head_dim
-    self.v_dim = linear_num_v_heads * linear_head_dim
+    self.layer_id = layer_id
+
+    self.qk_dim   = linear_num_kq_heads * linear_head_dim
+    self.v_dim    = linear_num_v_heads * linear_head_dim
     self.conv_dim = self.qk_dim * 2 + self.v_dim
 
     self.in_proj_qkv = nn.Linear(hidden_size, self.conv_dim, bias=False)
-    self.in_proj_a = nn.Linear(hidden_size, linear_num_v_heads, bias=False)
-    self.in_proj_b = nn.Linear(hidden_size, linear_num_v_heads, bias=False)
-    self.in_proj_z = nn.Linear(hidden_size, self.v_dim, bias=False)
+    self.in_proj_a   = nn.Linear(hidden_size, linear_num_v_heads, bias=False)
+    self.in_proj_b   = nn.Linear(hidden_size, linear_num_v_heads, bias=False)
+    self.in_proj_z   = nn.Linear(hidden_size, self.v_dim, bias=False)
 
     self.conv1d = nn.Conv1d(
       in_channels=self.conv_dim,
@@ -135,12 +143,12 @@ class LinearAttention(nn.Module):
       bias=False,
     )
 
-    self.dt_bias = nn.Parameter(torch.ones(linear_num_v_heads))
-    self.A_log = nn.Parameter(torch.zeros(linear_num_v_heads))
-    self.norm = RMSNormGated(linear_head_dim)
+    self.dt_bias  = nn.Parameter(torch.ones(linear_num_v_heads))
+    self.A_log    = nn.Parameter(torch.zeros(linear_num_v_heads))
+    self.norm     = RMSNormGated(linear_head_dim)
     self.out_proj = nn.Linear(self.v_dim, hidden_size, bias=False)
 
-  def forward(self, x: torch.Tensor) -> torch.Tensor:
+  def forward(self, x: torch.Tensor, cache: Cache | None) -> torch.Tensor:
     seq_len = x.shape[0]
 
     qkv = self.in_proj_qkv(x)
@@ -148,7 +156,14 @@ class LinearAttention(nn.Module):
     a = self.in_proj_a(x)
     b = self.in_proj_b(x)
 
-    qkv = F.silu(self.conv1d(qkv.transpose(0, 1))[:, : seq_len]).transpose(0, 1)
+    if cache is not None:
+      window = cache.upd_conv_cache(self.layer_id, qkv.transpose(0, 1))
+      if cache.is_prefill:
+        qkv = F.silu(self.conv1d(qkv.transpose(0, 1))[:, : seq_len]).transpose(0, 1)
+      else:
+        qkv = F.silu((window * self.conv1d.weight.squeeze(1)).sum(dim=-1)).unsqueeze(0)
+    else:
+      qkv = F.silu(self.conv1d(qkv.transpose(0, 1))[:, : seq_len]).transpose(0, 1)
 
     q, k, v = torch.split(qkv, [self.qk_dim, self.qk_dim, self.v_dim], dim=-1)
     q = q.reshape(seq_len, linear_num_kq_heads, -1)
@@ -170,7 +185,8 @@ class LinearAttention(nn.Module):
     state = torch.zeros(
       linear_num_v_heads, linear_head_dim, linear_head_dim,
       dtype=torch.float32, device=x.device
-    )
+    ) if cache is None else cache.recur_state[self.layer_id]
+
     out = torch.zeros_like(v)
     for t in range(seq_len):
       state = state * g[t].exp()[:, None, None]
@@ -178,6 +194,9 @@ class LinearAttention(nn.Module):
       delta = (v[t] - kv_mem) * beta[t][:, None]
       state = state + k[t][:, :, None] * delta[:, None, :]
       out[t] = (state * q[t][:, :, None]).sum(dim=1)
+
+    if cache is not None:
+      cache.upd_recur_cache(self.layer_id, state)
 
     out = out.to(x.dtype)
     out = self.norm(out.reshape(-1, linear_head_dim), z.reshape(-1, linear_head_dim))
@@ -189,9 +208,9 @@ class DecoderBlock(nn.Module):
 
     self.is_full = (id % block == 3)
     if self.is_full:
-      self.self_attn = Attention()
+      self.self_attn = Attention(id)
     else:
-      self.linear_attn = LinearAttention()
+      self.linear_attn = LinearAttention(id)
 
     self.mlp = MLP()
     self.input_layernorm = RMSNorm()
