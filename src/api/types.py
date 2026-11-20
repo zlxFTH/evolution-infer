@@ -2,8 +2,8 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class GenerateRequest:
-    prompt: str
+  prompt: str
 
 @dataclass(frozen=True, slots=True)
 class GenerateResponse:
-    text: str
+  text: str
