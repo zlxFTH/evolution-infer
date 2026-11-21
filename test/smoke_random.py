@@ -18,9 +18,9 @@ def main():
     out = outputs[i]["logits"]
     ans = answers[i]["logits"]
 
-    max_diff = max(max_diff, (out - ans).abs().max().item())
-    # ok = (ans.argmax() == out.argmax()).item()
-    ok = ((out - ans).abs().max() <= max_error).item() # max_diff 0.1875
+    diff = (out - ans).abs().max()
+    max_diff = max(max_diff, diff.item())
+    ok = (diff <= max_error).item()
     if not ok:
       wa.append(i)
       pass_ = False
