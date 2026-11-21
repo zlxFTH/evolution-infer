@@ -20,11 +20,11 @@ def check_correct(inputs, outputs_cache_off, outputs_cache_on):
   pass_ = True
   wa = []
   for i in range(test_case):
-    seq_len = input[i]["token"].shape[0]
-    assert seq_len * 2 == len(outputs_cache_off) == len(outputs_cache_on)
+    seq_len = inputs[i]["token"].shape[0]
+    assert seq_len == len(outputs_cache_off[i]) == len(outputs_cache_on[i])
 
     for j in range(seq_len):
-      assert inputs[i][j]["id"] == outputs_cache_off[i][j]["id"] == outputs_cache_on[i][j]["id"] 
+      assert inputs[i]["id"] == outputs_cache_off[i][j]["id"] == outputs_cache_on[i][j]["id"] 
 
       out_off = outputs_cache_off[i][j]["logits"]
       out_on  = outputs_cache_on[i][j]["logits"]
@@ -63,7 +63,7 @@ def main():
         seq_len = inputs[i]["token"].shape[0]
         positions = torch.arange(seq_len, dtype=torch.long, device="cuda")
 
-        output_seq = False
+        output_seq = []
         for j in range(seq_len):
           logits = model(positions, input_ids, cache)
           if cache is not None and j == 0:
