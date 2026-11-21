@@ -49,7 +49,7 @@ def main():
   load_model(model, model_path)
   
   with torch.inference_mode():
-    def bench(mode: str, cache: ):
+    def bench(mode: str, cache: Cache | None):
       torch.cuda.synchronize()
       beg = time.perf_counter()
 
@@ -59,35 +59,35 @@ def main():
         seq_len = inputs[i]["token"].shape[0]
         positions = torch.arange(seq_len, dtype=torch.long, device="cuda")
 
-        
+        for j in range(seq_len):
+          logits = model(positions, input_ids, cache)
+          if cache is not None and j == 0:
+            cache.is_prefill = False
 
-      
+          outputs.append({
+            "id": i,
+            "step": j,
+            "logits": logits[-1].cpu()
+          })
+
+          next_id = logits[-1].argmax().unsqueeze(0)
+          if cache is None:
+            positions = torch.cat((positions, positions.new_tensor([seq_len + j])))
+            input_ids = torch.cat((input_ids, next_id))
+          else:
+            positions = positions.new_tensor([cache.seq_len])
+            input_ids = next_id
+
+        if cache is not None:
+          cache.reset()
 
       torch.cuda.synchronize()
       end = time.perf_counter()
       return outputs, end - beg
 
     cache = Cache()
-    outputs_cache_off, t_off = bench("Cache Off")
-    outputs_cache_on, t_on = bench("Cache On")
-
-    for i in tqdm(range(test_case), desc="Running"):
-      logits_cache_off = model(positions, input_ids, None)
-      logits_cache_on  = model(positions, input_ids, cache)
-      for _ in range(seq_len):
-        
-        outputs_cache_off.append({
-          "id": i,
-          "logits": logits[-1].cpu()
-        })
-        outputs_cache_on.append({
-          "id": i,
-          "logits": logits[-1].cpu()
-        })
-      
-      cache.reset()
-
-  torch.save(outputs, data_path / "outputs.pt")
+    outputs_cache_off, t_off = bench("Cache Off", None)
+    outputs_cache_on , t_on  = bench("Cache On", cache)
 
 if __name__ == "__main__":
   main()
