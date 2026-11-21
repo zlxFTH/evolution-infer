@@ -220,9 +220,9 @@ class DecoderBlock(nn.Module):
     res = x
     x = self.input_layernorm(x)
     if self.is_full:
-      x = self.self_attn(positions, x)
+      x = self.self_attn(positions, x, cache)
     else:
-      x = self.linear_attn(x)
+      x = self.linear_attn(x, cache)
     x = res + x
 
     res = x
@@ -243,6 +243,8 @@ class Model(nn.Module):
     x = self.embed_tokens(input_ids)
     for layer in self.layers:
       x = layer(positions, x, cache)
+    if cache is not None:
+      cache.seq_len += input_ids.shape[0]
     return self.norm(x)
 
 class LLM(nn.Module):
