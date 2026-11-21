@@ -20,7 +20,7 @@ def main():
 
     max_diff = max(max_diff, (out - ans).abs().max().item())
     # ok = (ans.argmax() == out.argmax()).item()
-    ok = abs(ans.max() - out.max()) <= 0.2
+    ok = ((out - ans).abs().max() <= 0.2).item()
     if not ok:
       wa.append(i)
       pass_ = False
