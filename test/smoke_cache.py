@@ -37,9 +37,10 @@ def check_correct(inputs, outputs_cache_off, outputs_cache_on):
         pass_ = False
 
   if pass_:
-    print(f"ac, max_diff {max_diff}")
+    print(f"ac")
   else:
     print(f"wa on {wa}")
+  print(f"max_diff {max_diff}")
 
 def main():
   data_path  = root / "data" / "random"

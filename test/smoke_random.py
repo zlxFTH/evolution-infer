@@ -26,9 +26,10 @@ def main():
       pass_ = False
 
   if pass_:
-    print(f"ac, max_diff {max_diff}")
+      print(f"ac")
   else:
     print(f"wa on {wa}")
+  print(f"max_diff {max_diff}")
 
 if __name__ == "__main__":
   main()
