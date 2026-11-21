@@ -34,7 +34,7 @@ def check_correct():
     print(f"wa on {wa}")
 
 def main():
-  data_path = root / "data" / "random"
+  data_path  = root / "data" / "random"
   model_path = root / "model" / "qwen"
 
   inputs = torch.load(data_path / "inputs.pt", map_location="cpu", weights_only=True)
@@ -58,11 +58,19 @@ def main():
       positions = torch.arange(seq_len, dtype=torch.long, device="cuda")
 
       logits_cache_off = model(positions, input_ids, None)
-      logits_cache_on  = model(positions, input_ids, None)
-      outputs.append({
-        "id": i,
-        "logits": logits[-1].cpu()
-      })
+      logits_cache_on  = model(positions, input_ids, cache)
+      for _ in range(seq_len):
+        
+        outputs_cache_off.append({
+          "id": i,
+          "logits": logits[-1].cpu()
+        })
+        outputs_cache_on.append({
+          "id": i,
+          "logits": logits[-1].cpu()
+        })
+      
+      cache.reset()
 
   torch.save(outputs, data_path / "outputs.pt")
 
