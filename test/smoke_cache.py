@@ -32,7 +32,6 @@ def check_correct(inputs, outputs_cache_off, outputs_cache_on):
       out_off = outputs_cache_off[i][j]["logits"]
       out_on  = outputs_cache_on[i][j]["logits"]
 
-      same = same and (out_off.argmax() == out_on.argmax()).item()
       if same:
         diff = (out_off - out_on).abs().max()
         max_diff = max(max_diff, diff.item())
@@ -40,6 +39,7 @@ def check_correct(inputs, outputs_cache_off, outputs_cache_on):
         if not ok:
           wa.append((i, j))
           pass_ = False
+      same = same and (out_off.argmax() == out_on.argmax()).item()
 
   if pass_:
     print(f"ac")
