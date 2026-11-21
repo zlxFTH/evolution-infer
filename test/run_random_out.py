@@ -27,7 +27,7 @@ def main():
       input_ids = inputs[i]["token"].cuda()
       seq_len = inputs[i]["token"].shape[0]
       positions = torch.arange(seq_len, dtype=torch.long, device="cuda")
-      logits = model(positions, input_ids)
+      logits = model(positions, input_ids, None)
       outputs.append({
         "id": i,
         "logits": logits[-1].cpu()

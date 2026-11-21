@@ -12,7 +12,7 @@ class RMSNorm(nn.Module):
     self.eps = rms_norm_eps
     self.weight = nn.Parameter(torch.zeros(dim)) # 支持多维度
 
-  def forward(self, x: torch.Tensor) -> torch.Tensor:
+  def forward(self, x: torch.Tensor):
     xx = x.float()
     rms = torch.rsqrt(xx.pow(2).mean(dim=-1, keepdim=True) + self.eps)
     return (xx * rms * (1.0 + self.weight.float())).to(x.dtype)
@@ -25,11 +25,11 @@ class MLP(nn.Module):
     self.up_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
     self.down_proj = nn.Linear(intermediate_size, hidden_size, bias=False)
 
-  def forward(self, x: torch.Tensor) -> torch.Tensor:
+  def forward(self, x: torch.Tensor):
     # SwiGLU: down(silu(gate(x)) * up(x))
     return self.down_proj(F.silu(self.gate_proj(x)) * self.up_proj(x))
 
-def rotate_half(x: torch.Tensor) -> torch.Tensor:
+def rotate_half(x: torch.Tensor):
   x1 = x[..., : x.shape[-1] // 2]
   x2 = x[..., x.shape[-1] // 2 :]
   return torch.cat((-x2, x1), dim=-1)
@@ -50,7 +50,7 @@ class RoPE(nn.Module):
   # positions: [seq_len]
   # q: [seq_len, num_heads, head_dim]
   # k: [seq_len, num_kv_heads, head_dim]
-  def forward(self, positions: torch.Tensor, q: torch.Tensor, k: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+  def forward(self, positions: torch.Tensor, q: torch.Tensor, k: torch.Tensor):
     cos = self.cos_cached[positions].unsqueeze(1).to(q.dtype)
     sin = self.sin_cached[positions].unsqueeze(1).to(q.dtype)
 
@@ -77,7 +77,7 @@ class Attention(nn.Module):
     self.k_norm = RMSNorm(head_dim)
     self.rope = RoPE()
 
-  def forward(self, positions: torch.Tensor, x: torch.Tensor, cache: Cache | None) -> torch.Tensor:
+  def forward(self, positions: torch.Tensor, x: torch.Tensor, cache: Cache | None):
     seq_len = x.shape[0]
 
     q, gate = torch.chunk(self.q_proj(x).view(seq_len, num_heads, head_dim * 2), 2, dim=-1)
@@ -113,7 +113,7 @@ class RMSNormGated(nn.Module):
     self.eps = rms_norm_eps
     self.weight = nn.Parameter(torch.ones(dim))
 
-  def forward(self, x: torch.Tensor, gate: torch.Tensor) -> torch.Tensor:
+  def forward(self, x: torch.Tensor, gate: torch.Tensor):
     xx = x.float()
     rms = torch.rsqrt(xx.pow(2).mean(dim=-1, keepdim=True) + self.eps)
     out = (xx * rms).to(x.dtype) * self.weight
@@ -148,7 +148,7 @@ class LinearAttention(nn.Module):
     self.norm     = RMSNormGated(linear_head_dim)
     self.out_proj = nn.Linear(self.v_dim, hidden_size, bias=False)
 
-  def forward(self, x: torch.Tensor, cache: Cache | None) -> torch.Tensor:
+  def forward(self, x: torch.Tensor, cache: Cache | None):
     seq_len = x.shape[0]
 
     qkv = self.in_proj_qkv(x)
@@ -216,7 +216,7 @@ class DecoderBlock(nn.Module):
     self.input_layernorm = RMSNorm()
     self.post_attention_layernorm = RMSNorm()
 
-  def forward(self, positions: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+  def forward(self, positions: torch.Tensor, x: torch.Tensor, cache: Cache | None):
     res = x
     x = self.input_layernorm(x)
     if self.is_full:
@@ -239,10 +239,10 @@ class Model(nn.Module):
     self.layers = nn.ModuleList([DecoderBlock(i) for i in range(num_hidden_layers)])
     self.norm = RMSNorm()
 
-  def forward(self, positions: torch.Tensor, input_ids: torch.Tensor) -> torch.Tensor:
+  def forward(self, positions: torch.Tensor, input_ids: torch.Tensor, cache: Cache | None):
     x = self.embed_tokens(input_ids)
     for layer in self.layers:
-      x = layer(positions, x)
+      x = layer(positions, x, cache)
     return self.norm(x)
 
 class LLM(nn.Module):
@@ -251,5 +251,5 @@ class LLM(nn.Module):
     self.model = Model()
     self.lm_head = nn.Linear(hidden_size, vocab_size, bias=False)
 
-  def forward(self, positions: torch.Tensor, input_ids: torch.Tensor) -> torch.Tensor:
-    return self.lm_head(self.model(positions, input_ids))
+  def forward(self, positions: torch.Tensor, input_ids: torch.Tensor, cache: Cache | None):
+    return self.lm_head(self.model(positions, input_ids, cache))
