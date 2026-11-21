@@ -12,6 +12,7 @@ def main():
   max_diff = 0
   pass_ = True
   wa = []
+  max_error = 0.2 # logits 允许的最大误差, 经测试 max_diff 0.1875
   for i in range(case):
     assert inputs[i]["id"] == outputs[i]["id"] == answers[i]["id"]
 
