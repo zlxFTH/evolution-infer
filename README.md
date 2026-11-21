@@ -4,12 +4,12 @@
 
 - [x] Pytorch + nn 版 Qwen3.8 27b 推理，单 token 推理
 - [x] Pytorch + nn 版 Qwen3.8 27b 推理，单请求 Prefill + Decode：Attn KV Cache + Linear Attn Cache
+- [ ] 造数据
 - [ ] Pytorch + nn 版 Qwen3.8 27b 推理，采样与参数控制：SamplingParams + Sampler
 - [ ] Pytorch + nn 版 Qwen3.8 27b 推理，分页显存管理：BlockManager + Paged KV Cache
 - [ ] Pytorch + nn 版 Qwen3.8 27b 推理，连续批处理调度：Sequence + Scheduler
 - [ ] Pytorch + nn 版 Qwen3.8 27b 推理，批处理执行与图加速：ModelRunner + Context + flash-attn + CUDA Graph
 - [ ] Pytorch + nn 版 Qwen3.8 27b 推理，引擎外层封装：LLMEngine + Tokenizer
-- [ ] 造数据
 - [ ] Benchmark
 - [ ] 复现 DSpark Draft Model
 - [ ] 设计 Copy Locator Model 架构和 Router 架构
