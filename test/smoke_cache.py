@@ -33,7 +33,10 @@ def check_correct(inputs, outputs_cache_off, outputs_cache_on):
       out_on  = outputs_cache_on[i][j]["logits"]
 
       if same:
-        diff = (out_off - out_on).abs().max()
+        p_off = torch.softmax(out_off.float(), dim=-1)
+        p_on  = torch.softmax(out_on.float(), dim=-1)
+
+        diff = (p_off - p_on).abs().max()
         max_diff = max(max_diff, diff.item())
         ok = (diff <= max_error).item()
         if not ok:

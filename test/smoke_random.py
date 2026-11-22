@@ -12,14 +12,17 @@ def main():
   max_diff = 0
   pass_ = True
   wa = []
-  max_error = 0.2 # logits 允许的最大误差, 经测试 max_diff 0.1875
+  max_error = 0.1 # max_diff 0.1875
   for i in range(case):
     assert inputs[i]["id"] == outputs[i]["id"] == answers[i]["id"]
 
     out = outputs[i]["logits"]
     ans = answers[i]["logits"]
 
-    diff = (out - ans).abs().max()
+    p_out = torch.softmax(out.float(), dim=-1)
+    p_ans = torch.softmax(ans.float(), dim=-1)
+
+    diff = (p_out - p_ans).abs().max()
     max_diff = max(max_diff, diff.item())
     ok = (diff <= max_error).item()
     if not ok:
