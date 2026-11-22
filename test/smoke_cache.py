@@ -15,7 +15,8 @@ from constant_random import *
 assert case >= 10
 test_case = 10
 
-max_error = 0.5 # 随机 token 序列，无语义，top12 容易打平，长自回归容易分叉
+# 随机 token 序列，无语义，top12 容易打平，长自回归容易分叉
+max_error = 0.1 # max_diff 
 
 def check_correct(inputs, outputs_cache_off, outputs_cache_on):
   max_diff = 0

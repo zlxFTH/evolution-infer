@@ -12,7 +12,7 @@ def main():
   max_diff = 0
   pass_ = True
   wa = []
-  max_error = 0.1 # max_diff 0.1875
+  max_error = 0.1 # max_diff 0.0074
   for i in range(case):
     assert inputs[i]["id"] == outputs[i]["id"] == answers[i]["id"]
 
