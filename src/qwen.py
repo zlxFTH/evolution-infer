@@ -161,7 +161,7 @@ class LinearAttention(nn.Module):
       if cache.is_prefill:
         qkv = F.silu(self.conv1d(qkv.transpose(0, 1))[:, : seq_len]).transpose(0, 1)
       else:
-        qkv = F.silu((window * self.conv1d.weight.squeeze(1)).sum(dim=-1)).unsqueeze(0)
+        qkv = F.silu(F.conv1d(window, self.conv1d.weight, groups=self.conv_dim)).transpose(0, 1)
     else:
       qkv = F.silu(self.conv1d(qkv.transpose(0, 1))[:, : seq_len]).transpose(0, 1)
 
