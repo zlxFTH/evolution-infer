@@ -12,7 +12,7 @@ def _propose_draft(
   gen_ids: list[int],
   heads: CopyGenHeads,
   hidden: torch.Tensor,
-  limit: int,
+  limit: int, # 本次拷贝允许的最多 token
 ) -> tuple[int, list[int]]:
   if limit == 0:
     return 0, []
@@ -38,7 +38,7 @@ def _predict_draft(
   match_length: int,
   calibrate: bool,
 ) -> list[int]:
-  next_logits, last_hidden = prefix_output
+  next_logits,  last_hidden  = prefix_output
   draft_logits, draft_hidden = draft_output
 
   # 首个草稿由已确认前缀的最后一行预测，后续草稿使用块内左移一位的输出。
@@ -55,14 +55,12 @@ def _predict_draft(
   logits.scatter_add_(1, draft_ids.unsqueeze(-1), bias)
   return logits.argmax(dim=-1).tolist()
 
-
 def _last_position(
   output: tuple[torch.Tensor, torch.Tensor],
 ) -> tuple[torch.Tensor, torch.Tensor]:
   logits, hidden = output
   # 只保留下一轮需要的一行，释放 Prefill 或验证块的完整输出。
   return logits[-1].clone(), hidden[-1].clone()
-
 
 @torch.inference_mode()
 def generate_copygen(
