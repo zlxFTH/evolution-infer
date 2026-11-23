@@ -7,7 +7,7 @@
 ## 1. 复现目标与范围
 
 - **基座模型**：冻结的 `Qwen3.8-27B`（`src/qwen.py` + `src/cache.py` + `src/load.py`），不微调主模型任何权重。
-- **数据集**：使用本地已下载的 `data/code/train.jsonl`（821 条）与 `data/code/test.jsonl`（229 条）。
+- **数据集**：使用本地已下载的 `data/copygen/code/train.jsonl`（821 条）与 `data/copygen/code/test.jsonl`（229 条）。
 - **双模式验证开关**：
   - **`calibrate=False`（无损投机加速模式）**：仅使用 `Trigger Head` + `Length Head` 提出草稿，主模型原样并行验证，**不修改主模型 logits**，严格保证输出与原模型一致。
   - **`calibrate=True`（论文原版模式）**：额外启用 `Verifier Calibration Head` 微调验证期 logits，用于复现论文的 Exact Match（EM）准确率提升并与无损模式做消融对比。
@@ -39,20 +39,21 @@ repo/
 │   ├── smoke_random.py              # [不变] 单步前向对拍
 │   ├── smoke_cache.py               # [不变] Prefill + Decode 缓存对拍与测速
 │   ├── smoke_verify.py              # [新增] 验证“多 token 并行验证 + 48 层 GDN 回滚”数值一致性
-│   └── eval_copygen.py              # [新增] 在 data/code/test.jsonl 上评测 EM、接受长度与 tok/s
+│   └── eval_copygen.py              # [新增] 在 data/copygen/code/test.jsonl 上评测 EM、接受长度与 tok/s
 │
 ├── data/
-│   └── code/
-│       ├── train.jsonl              # [已有] 821 条训练数据
-│       ├── test.jsonl               # [已有] 229 条测试数据
-│       ├── stats.json               # [已有] 数据统计
-│       └── copygen_feats.pt         # [运行生成，不入 Git] 离线特征与标签
+│   └── copygen/
+│       └── code/
+│           ├── train.jsonl              # [已有] 821 条训练数据
+│           ├── test.jsonl               # [已有] 229 条测试数据
+│           ├── stats.json               # [已有] 数据统计
+│           └── copygen_feats.pt         # [运行生成，不入 Git] 离线特征与标签
 │
 └── checkpoints/                     # [运行生成，建议加入 .gitignore]
     └── copygen_code.pt              # 训练好的 CopyGen 轻量头权重（约几 MB）
 ```
 
-> **Git 忽略建议**：在 `.gitignore` 中补充 `checkpoints/` 与 `data/code/*.pt`，只提交源码和脚本。
+> **Git 忽略建议**：在 `.gitignore` 中补充 `checkpoints/` 与 `data/copygen/code/*.pt`，只提交源码和脚本。
 
 ---
 
@@ -225,17 +226,17 @@ class CopyGenHeads(nn.Module):
 ## 5. 数据准备与训练流程（`train/`）
 
 ### 5.1 离线特征与标签提取（`train/extract_copygen_feats.py`）
-1. 读取 `data/code/train.jsonl`（821 条），按 `f"{row['context']}\n\n{row['instruction']}"` 拼装并用 `Qwen3.8-27B` 的 `apply_chat_template(..., enable_thinking=False)` 编码为 `prompt_ids`。
+1. 读取 `data/copygen/code/train.jsonl`（821 条），按 `f"{row['context']}\n\n{row['instruction']}"` 拼装并用 `Qwen3.8-27B` 的 `apply_chat_template(..., enable_thinking=False)` 编码为 `prompt_ids`。
 2. **目标输出序列 `target_ids` 选择**：
    - 做**无损投机加速版（`calibrate=False`）**：建议先用 `vllm`（greedy `temperature=0`）对 821 条跑出 `Qwen3.8-27B` 自己的真实回答作为 `target_ids`；
    - 做**论文复现版（`calibrate=True`）**：可以直接使用 `gold_answer` 编码为 `target_ids`。
 3. 在 `prompt_ids` 和 `target_ids` 上运行 `matcher` 自动打标：
    - 对 `target_ids` 中每一个位置 $t$：计算当前后缀匹配 `(m_t, copy_start)`，并向后统计从 `copy_start` 开始实际连续匹配的剩余长度 `true_len`；
    - 若 `m_t >= 2` 且 `true_len >= 4`：`trigger_label = 1 (COPY)`，`len_label = log(true_len)`；否则 `trigger_label = 0 (GEN)`。
-4. 用冻结的 `LLM(..., return_hidden=True)` 对 `[prompt_ids, target_ids]` 跑 1 次无 Cache 前向，只保存 `target_ids` 区间对应的 `hidden_states`（BF16）与上述标签到 `data/code/copygen_feats.pt`。
+4. 用冻结的 `LLM(..., return_hidden=True)` 对 `[prompt_ids, target_ids]` 跑 1 次无 Cache 前向，只保存 `target_ids` 区间对应的 `hidden_states`（BF16）与上述标签到 `data/copygen/code/copygen_feats.pt`。
 
 ### 5.2 离线训练脚本（`train/train_copygen.py`）
-- **无需加载 27B 主模型**，直接读取 `data/code/copygen_feats.pt` 训练 `CopyGenHeads`：
+- **无需加载 27B 主模型**，直接读取 `data/copygen/code/copygen_feats.pt` 训练 `CopyGenHeads`：
   - `TriggerHead`：加权 Cross-Entropy Loss（平衡 `GEN` / `COPY` 正负样本比例）；
   - `LengthHead`：仅在 `trigger_label == 1` 的位置上对 `log(true_len)` 计算 Smooth L1 Loss；
   - `CalibrationHead`（如需）：在拷贝边界内外计算二元/margin 校准损失。
@@ -249,7 +250,7 @@ class CopyGenHeads(nn.Module):
    - 不依赖训练好的头，随机切一段草稿送进 `model` 做多 token 验证 + 故意在第 $a$ 步触发 `cache.restore(snap)` 回滚重放；
    - 对比回滚后的最终 `logits` 与无 Cache 整段前向的 `softmax` 最大误差，确保 **16 层 KV 掩码 + 48 层 GDN 回滚 100% 无 Bug**。
 2. **`test/eval_copygen.py`（端到端评测）**：
-   - 在 `data/code/test.jsonl`（229 条）上对比以下 5 组：
+   - 在 `data/copygen/code/test.jsonl`（229 条）上对比以下 5 组：
      1. 自研 `PyTorch + Cache`（无投机基线）
      2. 自研 `PyTorch + Cache + CopyGen (calibrate=False)`（无损拷贝加速）
      3. 自研 `PyTorch + Cache + CopyGen (calibrate=True)`（论文校准复现）
@@ -262,7 +263,7 @@ class CopyGenHeads(nn.Module):
 ## 7. 推荐实施顺序
 
 1. **Step 1**：改 `src/qwen.py`（`return_hidden`、`Attention` 验证掩码、`LinearAttention` `F.conv1d`）和 `src/cache.py`（`snapshot` / `restore`），写 `test/smoke_verify.py` 跑通数值对齐。
-2. **Step 2**：写 `src/copygen/matcher.py` 并在 `data/code/test.jsonl` 上跑一遍 Oracle 统计（先确认这套数据上有多少比例的 token 能被后缀匹配覆盖）。
+2. **Step 2**：写 `src/copygen/matcher.py` 并在 `data/copygen/code/test.jsonl` 上跑一遍 Oracle 统计（先确认这套数据上有多少比例的 token 能被后缀匹配覆盖）。
 3. **Step 3**：写 `src/copygen/heads.py`、`train/extract_copygen_feats.py`、`train/train_copygen.py`，在 AutoDL 上训出 `checkpoints/copygen_code.pt`。
 4. **Step 4**：写 `src/copygen/decoder.py` 和 `test/eval_copygen.py`，跑通端到端 EM 与加速比评测。
 5. **Step 5（平滑衔接下一阶段）**：保留已验证通过的多 token 验证 + GDN 回滚引擎，把 `matcher.py` 升级为指针式 **`Copy Locator [l, r]`**，把 `GEN` 分支升级为 **`DSpark`**，把 `TriggerHead` 升级为 **`Router`**。

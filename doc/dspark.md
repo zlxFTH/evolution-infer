@@ -139,7 +139,7 @@ Router 不再负责预测长度 $k$，只做一个极轻量的二分类判断（
 ## 6. 数据准备与两阶段训练流程（`train/`）
 
 ### 6.1 数据来源（自蒸馏对齐目标模型分布）
-- **通用 + 代码对话**：从 `ShareGPT` / `UltraChat` 以及你的代码数据（`data/code/train.jsonl`、`CommitPackFT`）取 prompt；
+- **通用 + 代码对话**：从 `ShareGPT` / `UltraChat` 以及你的代码数据（`data/copygen/code/train.jsonl`、`CommitPackFT`）取 prompt；
 - **用 `vllm` 跑一遍 `Qwen3.8-27B` 生成回答**：训练无损草稿模型必须对齐目标模型自身分布，因此以 `Qwen3.8-27B` 生成的 `target_ids` 作为监督目标；
 - **离线抽特征（`extract_dspark_feats.py`）**：用冻结的 `LLM(..., return_hidden=True)` 跑一次前向，存下 `(input_ids, hidden_states, target_top_k_logits)`（只存每个位置的 top-16 logits 值与下标，体积缩小上万倍！）。
 
@@ -167,5 +167,5 @@ Router 不再负责预测长度 $k$，只做一个极轻量的二分类判断（
 
 1. **先完成 [copygen.md](copygen.md) 的 Step 1**：把 `qwen.py` 多 token 验证和 `cache.py` 48 层 GDN 回滚写通并用 `smoke_verify.py` 测过。
 2. **单独复现 DSpark 闭环**：写 `src/dspark/model.py` + `scheduler.py`，先在 1000～2000 条代码/对话数据上跑通 Stage 1 + Stage 2 训练，用 `eval_dspark.py` 验证 **单跑 DSpark** 相对纯 `PyTorch + Cache` 和 `vLLM + MTP` 的平均接受长度与加速比。
-3. **接入二分类 Router 合体**：把 `CopyGen`（或升级后的 `Copy Locator`）与 `DSpark` 通过 `src/router.py` 拼在一起，在代码改写 + `CopyGen/data/code` + `Spec-Bench` 上做完整消融对比（`Base` vs `Only Copy` vs `Only DSpark` vs `Router + Copy + DSpark`）。
+3. **接入二分类 Router 合体**：把 `CopyGen`（或升级后的 `Copy Locator`）与 `DSpark` 通过 `src/router.py` 拼在一起，在代码改写 + `data/copygen/code` + `Spec-Bench` 上做完整消融对比（`Base` vs `Only Copy` vs `Only DSpark` vs `Router + Copy + DSpark`）。
 4. **最后做 TileLang 算子加速**：把瓶颈从纯 PyTorch 换成 TileLang 融合 Decode 核与长块轻量回滚核，拉满端到端真实 `tok/s`。
