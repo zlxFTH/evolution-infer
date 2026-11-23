@@ -1,137 +1,92 @@
 import math
-from collections.abc import Sequence
-
 import torch
-import torch.nn as nn
 
-from .heads import CopyGenHeads
 from .matcher import match
 
-def _propose_draft(
-  ctx_ids: list[int],
-  gen_ids: list[int],
-  heads: CopyGenHeads,
-  hidden: torch.Tensor,
-  limit: int, # 本次拷贝允许的最多 token
-) -> tuple[int, list[int]]:
-  if limit == 0:
-    return 0, []
-
-  match_length, copy_start = match(ctx_ids, gen_ids)
-  if copy_start is None or copy_start == len(ctx_ids):
-    return 0, []
-
-  features = heads.features(hidden, match_length)
-  if heads.trigger_head(features).argmax().item() != 1:
-    return 0, []
-
-  limit = min(limit, len(ctx_ids) - copy_start)
-  log_length = heads.log_length(features).item()
-  length = limit if log_length >= math.log(limit) else math.floor(math.exp(log_length))
-  return match_length, ctx_ids[copy_start : copy_start + length]
-
-def _predict_draft(
-  prefix_output: tuple[torch.Tensor, torch.Tensor],
-  draft_output: tuple[torch.Tensor, torch.Tensor],
-  draft_ids: torch.Tensor,
-  heads: CopyGenHeads,
-  match_length: int,
-  calibrate: bool,
-) -> list[int]:
-  next_logits,  last_hidden  = prefix_output
-  draft_logits, draft_hidden = draft_output
-
-  # 首个草稿由已确认前缀的最后一行预测，后续草稿使用块内左移一位的输出。
-  if not calibrate:
-    first = next_logits.argmax().unsqueeze(0)
-    rest = draft_logits[:-1].argmax(dim=-1)
-    return torch.cat((first, rest)).tolist()
-
-  logits = torch.cat((next_logits.unsqueeze(0), draft_logits[:-1]), dim=0).float()
-  hidden = torch.cat((last_hidden.unsqueeze(0), draft_hidden[:-1]), dim=0)
-  # 沿同一处上下文继续拷贝时，匹配后缀每步增长一个 token。
-  lengths = torch.arange(match_length, match_length + draft_ids.numel(), device=hidden.device)
-  bias = heads.calib_head(heads.features(hidden, lengths)).to(logits.dtype)
-  logits.scatter_add_(1, draft_ids.unsqueeze(-1), bias)
-  return logits.argmax(dim=-1).tolist()
-
-def _last_position(
-  output: tuple[torch.Tensor, torch.Tensor],
-) -> tuple[torch.Tensor, torch.Tensor]:
-  logits, hidden = output
-  # 只保留下一轮需要的一行，释放 Prefill 或验证块的完整输出。
-  return logits[-1].clone(), hidden[-1].clone()
-
 @torch.inference_mode()
-def generate_copygen(
-  model: nn.Module,
-  cache,
-  heads: CopyGenHeads,
-  prompt_ids: Sequence[int] | torch.Tensor,
-  max_new_tokens: int,
-  calibrate: bool = False,
-  *,
-  eos_token_id: int | None = None,
-  max_copy_len: int = 64,
-) -> list[int]:
-  """贪心生成并返回新增 token。max_copy_len 为 0 时走纯 GEN。
-
-  主模型需要支持 return_hidden=True 和带缓存的多 token 因果前向。
-  Cache 需要支持 snapshot/restore，且容量须覆盖 prompt 和生成预算。
-  model 和 heads 应位于同一设备。
-  """
-  if max_new_tokens < 0 or max_copy_len < 0:
-    raise ValueError("max_new_tokens and max_copy_len must be non-negative")
+def generate_copygen(model, cache, heads, prompt_ids, max_new_tokens, calibrate=False, eos_token_id=None, max_copy_len=64):
   if max_new_tokens == 0:
     return []
 
-  device = next(model.parameters(), heads.ln.weight).device
-  prompt = torch.as_tensor(prompt_ids, dtype=torch.long, device=device)
-  if prompt.ndim != 1 or prompt.numel() == 0:
-    raise ValueError("prompt_ids must be a non-empty one-dimensional sequence")
-  ctx_ids = prompt_ids.tolist() if isinstance(prompt_ids, torch.Tensor) else list(prompt_ids)
+  device = next(model.parameters()).device
+  input_ids = torch.as_tensor(prompt_ids, dtype=torch.long, device=device)
+  ctx_ids = input_ids.tolist()
 
-  def forward(input_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-    start = cache.seq_len
-    positions = torch.arange(start, start + input_ids.numel(), device=device)
-    return model(positions, input_ids, cache, return_hidden=True)
-
+  # 1. Prefill
   cache.reset()
   cache.is_prefill = True
-  prefix_output = _last_position(forward(prompt))
+  positions = torch.arange(input_ids.numel(), dtype=torch.long, device=device)
+  logits, hidden = model(positions, input_ids, cache, return_hidden=True)
+  last_logits = logits[-1].clone()
+  last_hidden = hidden[-1].clone()
   cache.is_prefill = False
 
-  gen_ids: list[int] = []
+  gen_ids = []
   while len(gen_ids) < max_new_tokens:
-    limit = min(max_copy_len, max_new_tokens - len(gen_ids))
-    next_logits, last_hidden = prefix_output
-    match_length, draft = _propose_draft(ctx_ids, gen_ids, heads, last_hidden, limit)
+    # 2. 检查后缀匹配 + TriggerHead 判断是否拷贝
+    m_len, copy_start = match(ctx_ids, gen_ids)
+    draft = []
+    if max_copy_len > 0 and copy_start is not None and copy_start < len(ctx_ids):
+      feat = heads.features(last_hidden, m_len)
+      if heads.trigger_head(feat).argmax().item() == 1:
+        limit = min(max_copy_len, max_new_tokens - len(gen_ids), len(ctx_ids) - copy_start)
+        log_len = heads.log_length(feat).item()
+        copy_len = limit if log_len >= math.log(limit) else math.floor(math.exp(log_len))
+        draft = ctx_ids[copy_start : copy_start + copy_len]
+        if eos_token_id in draft:
+          draft = draft[: draft.index(eos_token_id) + 1]
 
+    # 3A. 不拷贝：普通单步 Decode
     if not draft:
-      emitted = [next_logits.argmax().item()]
-      output = forward(prompt.new_tensor(emitted))
+      next_id = last_logits.argmax().item()
+      step_ids = input_ids.new_tensor([next_id])
+      step_pos = input_ids.new_tensor([cache.seq_len])
+      logits, hidden = model(step_pos, step_ids, cache, return_hidden=True)
+      gen_ids.append(next_id)
+      last_logits = logits[-1].clone()
+      last_hidden = hidden[-1].clone()
+      if next_id == eos_token_id:
+        break
+      continue
+
+    # 3B. 拷贝：一次喂整段草稿并行验证
+    snap = cache.snapshot()
+    draft_ids = input_ids.new_tensor(draft)
+    draft_pos = torch.arange(cache.seq_len, cache.seq_len + len(draft), dtype=torch.long, device=device)
+    logits, hidden = model(draft_pos, draft_ids, cache, return_hidden=True)
+
+    # 拼出主模型对 draft 每一位的预测（第 0 位来自 last_logits，其余来自 logits[:-1]）
+    verify_logits = torch.cat((last_logits.unsqueeze(0), logits[:-1]), dim=0)
+    if calibrate:
+      verify_logits = verify_logits.float()
+      verify_hidden = torch.cat((last_hidden.unsqueeze(0), hidden[:-1]), dim=0)
+      lengths = torch.arange(m_len, m_len + len(draft), device=device)
+      bias = heads.calib_head(heads.features(verify_hidden, lengths)).to(verify_logits.dtype)
+      verify_logits.scatter_add_(1, draft_ids.unsqueeze(-1), bias)
+    pred = verify_logits.argmax(dim=-1).tolist()
+
+    # 4. 逐位核对，全对就直接收下；有错就回滚重放已对前缀 + 修正词
+    accept = len(draft)
+    for i in range(len(draft)):
+      if draft[i] != pred[i]:
+        accept = i
+        break
+
+    if accept == len(draft):
+      gen_ids.extend(draft)
+      last_logits = logits[-1].clone()
+      last_hidden = hidden[-1].clone()
     else:
-      if eos_token_id in draft:
-        draft = draft[: draft.index(eos_token_id) + 1]
-      draft_ids = prompt.new_tensor(draft)
-      snapshot = cache.snapshot()
-      output = forward(draft_ids)
-      predicted = _predict_draft(prefix_output, output, draft_ids, heads, match_length, calibrate)
+      cache.restore(snap)
+      emitted = draft[:accept] + [pred[accept]]
+      fix_ids = input_ids.new_tensor(emitted)
+      fix_pos = torch.arange(cache.seq_len, cache.seq_len + len(emitted), dtype=torch.long, device=device)
+      logits, hidden = model(fix_pos, fix_ids, cache, return_hidden=True)
+      gen_ids.extend(emitted)
+      last_logits = logits[-1].clone()
+      last_hidden = hidden[-1].clone()
 
-      emitted = draft
-      for index, (candidate, target) in enumerate(zip(draft, predicted, strict=True)):
-        if candidate != target:
-          cache.restore(snapshot)
-          emitted = draft[:index] + [target]
-          del output
-          output = forward(prompt.new_tensor(emitted))
-          break
-      del snapshot
-
-    gen_ids.extend(emitted)
-    if emitted[-1] == eos_token_id or len(gen_ids) == max_new_tokens:
+    if gen_ids[-1] == eos_token_id:
       break
-    prefix_output = _last_position(output)
-    del output
 
   return gen_ids
