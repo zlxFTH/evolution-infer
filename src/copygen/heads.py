@@ -25,7 +25,7 @@ class CopyGenHeads(nn.Module):
     hidden_states: torch.Tensor,
     match_lengths: int | torch.Tensor,
   ) -> torch.Tensor:
-    """拼接并归一化 h_t 和 log(1 + m_t)，支持批量位置。"""
+    # hidden 和 log(1 + m_t) 拼起来，多 hidden 形状支持
     hidden_states = hidden_states.to(dtype=self.ln.weight.dtype)
     # as_tensor 统一转成 torch.Tensor
     lengths = torch.as_tensor(match_lengths, device=hidden_states.device, dtype=torch.float32)
@@ -41,6 +41,5 @@ class CopyGenHeads(nn.Module):
     hidden_states: torch.Tensor,
     match_lengths: int | torch.Tensor,
   ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """返回 GEN/COPY logits、对数拷贝长度和复制 token 的 logit 偏置。"""
     features = self.features(hidden_states, match_lengths)
     return self.trigger_head(features), self.log_length(features), self.calib_head(features)
