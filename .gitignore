@@ -1,6 +1,7 @@
 .DS_Store
 .venv
 data/*
+/tmp/
 model/*
 !model/.gitkeep
 __pycache__/
