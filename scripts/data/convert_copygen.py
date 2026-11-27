@@ -24,9 +24,17 @@ def copy_spans(tokens, offset, n, prompt_len, cot_len):
   if n < MIN_COPY:
     return []
 
+  cot_end = prompt_len + cot_len
+
+  def seg_stop(l, limit):
+    return prompt_len if l < prompt_len else (cot_end if l < cot_end else limit)
+
+  # 仅索引完整落在同一阶段 (prompt / cot / output) 内的起点 l，禁止跨阶段复制
   starts = defaultdict(list)
-  for l in range(offset + n - MIN_COPY + 1):
-    starts[tuple(tokens[l : l + MIN_COPY])].append(l)
+  limit_end = offset + n
+  for l in range(limit_end - MIN_COPY + 1):
+    if l + MIN_COPY <= seg_stop(l, limit_end):
+      starts[tuple(tokens[l : l + MIN_COPY])].append(l)
 
   dp = [(0, 0)] * (n + 1)
   chosen_end = {}
@@ -39,7 +47,8 @@ def copy_spans(tokens, offset, n, prompt_len, cot_len):
     for l in starts[tuple(tokens[pos : pos + MIN_COPY])]:
       if l + MIN_COPY > pos:
         break
-      length = min(pos - l, n - i, 1 + next_matches.get(l + 1, MIN_COPY - 1))
+      limit = min(pos, seg_stop(l, pos)) - l
+      length = min(limit, n - i, 1 + next_matches.get(l + 1, MIN_COPY - 1))
       matches[l] = length
       if length > longest:
         longest = length
@@ -76,9 +85,9 @@ def copy_spans(tokens, offset, n, prompt_len, cot_len):
     for l in starts[tuple(tokens[pos : pos + MIN_COPY])]:
       if l + span_len > pos:
         break
-      if tokens[l : l + span_len] != tokens[pos : pos + span_len]:
+      if l + span_len > seg_stop(l, pos) or tokens[l : l + span_len] != tokens[pos : pos + span_len]:
         continue
-      prio = 2 if l + span_len <= prompt_len else (1 if l + span_len <= prompt_len + cot_len else 0)
+      prio = 2 if l < prompt_len else (1 if l < cot_end else 0)
       ov = 0
       lim = min(l, pos)
       while ov < lim and tokens[l - 1 - ov] == tokens[pos - 1 - ov]:
