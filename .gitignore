@@ -4,4 +4,6 @@ data/*
 /tmp/
 model/*
 !model/.gitkeep
+checkpoints/*
+!checkpoints/.gitkeep
 __pycache__/

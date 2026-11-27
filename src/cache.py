@@ -38,6 +38,19 @@ class Cache():
   def upd_recur_cache(self, i: int, state: torch.Tensor):
     self.recur_state[i].copy_(state)
 
+  def snapshot(self):
+    # KV 只追加，回滚时截短 seq_len 即可。
+    conv = [s.clone() if s is not None else None for s in self.conv_state]
+    recur = [s.clone() if s is not None else None for s in self.recur_state]
+    return self.seq_len, self.is_prefill, conv, recur
+
+  def restore(self, snapshot):
+    self.seq_len, self.is_prefill, conv, recur = snapshot
+    for i, state in enumerate(self.conv_state):
+      if state is not None:
+        state.copy_(conv[i])
+        self.recur_state[i].copy_(recur[i])
+
   def reset(self):
     self.seq_len    = 0
     self.is_prefill = True
@@ -47,4 +60,3 @@ class Cache():
     for u in self.recur_state:
       if u is not None:
         u.zero_()
-    

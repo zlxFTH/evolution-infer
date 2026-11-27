@@ -1,9 +1,11 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
+from torch.nn.attention.bias import causal_lower_right
 
 from constant import *
 from cache import Cache
+from gdn import chunk_gated_delta
 
 class RMSNorm(nn.Module):
   def __init__(self, dim: int = hidden_size):
@@ -96,10 +98,10 @@ class Attention(nn.Module):
     k = torch.transpose(k, 0, 1).unsqueeze(0)
     v = torch.transpose(v, 0, 1).unsqueeze(0)
 
+    is_causal = cache is None or cache.is_prefill
+    mask = causal_lower_right(seq_len, k.size(-2)) if not is_causal and seq_len > 1 else None
     out = F.scaled_dot_product_attention(
-      q, k, v,
-      is_causal=(True if cache is None else cache.is_prefill),
-      enable_gqa=True
+      q, k, v, attn_mask=mask, is_causal=is_causal, enable_gqa=True,
     )
 
     out = out.squeeze(0).transpose(0, 1).reshape(seq_len, -1)
@@ -120,10 +122,11 @@ class RMSNormGated(nn.Module):
     return (out * F.silu(gate.float())).to(x.dtype)
 
 class LinearAttention(nn.Module):
-  def __init__(self, layer_id: int):
+  def __init__(self, layer_id: int, chunked_gdn: bool = False):
     super().__init__()
 
     self.layer_id = layer_id
+    self.chunked_gdn = chunked_gdn
 
     self.qk_dim   = linear_num_kq_heads * linear_head_dim
     self.v_dim    = linear_num_v_heads * linear_head_dim
@@ -187,13 +190,16 @@ class LinearAttention(nn.Module):
       dtype=torch.float32, device=x.device
     ) if cache is None else cache.recur_state[self.layer_id]
 
-    out = torch.zeros_like(v)
-    for t in range(seq_len):
-      state = state * g[t].exp()[:, None, None]
-      kv_mem = (state * k[t][:, :, None]).sum(dim=1)
-      delta = (v[t] - kv_mem) * beta[t][:, None]
-      state = state + k[t][:, :, None] * delta[:, None, :]
-      out[t] = (state * q[t][:, :, None]).sum(dim=1)
+    if self.chunked_gdn and seq_len >= 8:
+      out, state = chunk_gated_delta(q, k, v, g, beta, state)
+    else:
+      out = torch.zeros_like(v)
+      for t in range(seq_len):
+        state = state * g[t].exp()[:, None, None]
+        kv_mem = (state * k[t][:, :, None]).sum(dim=1)
+        delta = (v[t] - kv_mem) * beta[t][:, None]
+        state = state + k[t][:, :, None] * delta[:, None, :]
+        out[t] = (state * q[t][:, :, None]).sum(dim=1)
 
     if cache is not None:
       cache.upd_recur_cache(self.layer_id, state)
@@ -203,14 +209,14 @@ class LinearAttention(nn.Module):
     return self.out_proj(out.reshape(seq_len, -1))
 
 class DecoderBlock(nn.Module):
-  def __init__(self, id: int):
+  def __init__(self, id: int, chunked_gdn: bool = False):
     super().__init__()
 
     self.is_full = (id % block == 3)
     if self.is_full:
       self.self_attn = Attention(id)
     else:
-      self.linear_attn = LinearAttention(id)
+      self.linear_attn = LinearAttention(id, chunked_gdn)
 
     self.mlp = MLP()
     self.input_layernorm = RMSNorm()
@@ -233,25 +239,38 @@ class DecoderBlock(nn.Module):
     return x
 
 class Model(nn.Module):
-  def __init__(self):
+  def __init__(self, chunked_gdn: bool = False):
     super().__init__()
     self.embed_tokens = nn.Embedding(vocab_size, hidden_size)
-    self.layers = nn.ModuleList([DecoderBlock(i) for i in range(num_hidden_layers)])
+    self.layers = nn.ModuleList([DecoderBlock(i, chunked_gdn) for i in range(num_hidden_layers)])
     self.norm = RMSNorm()
 
-  def forward(self, positions: torch.Tensor, input_ids: torch.Tensor, cache: Cache | None):
+  def forward(self, positions: torch.Tensor, input_ids: torch.Tensor, cache: Cache | None,
+              *, hidden_layers: tuple[int, ...] = ()):
     x = self.embed_tokens(input_ids)
-    for layer in self.layers:
+    selected = {}
+    for i, layer in enumerate(self.layers):
       x = layer(positions, x, cache)
+      if i in hidden_layers:
+        selected[i] = x
     if cache is not None:
       cache.seq_len += input_ids.shape[0]
-    return self.norm(x)
+    x = self.norm(x)
+    return (x, tuple(selected[i] for i in hidden_layers)) if hidden_layers else x
 
 class LLM(nn.Module):
-  def __init__(self):
+  def __init__(self, *, chunked_gdn: bool = False):
     super().__init__()
-    self.model = Model()
+    self.model = Model(chunked_gdn)
     self.lm_head = nn.Linear(hidden_size, vocab_size, bias=False)
 
-  def forward(self, positions: torch.Tensor, input_ids: torch.Tensor, cache: Cache | None):
-    return self.lm_head(self.model(positions, input_ids, cache))
+  def forward(self, positions: torch.Tensor, input_ids: torch.Tensor, cache: Cache | None,
+              *, return_hidden: bool = False, logits_to_keep: int = 0,
+              hidden_layers: tuple[int, ...] = ()):
+    hidden = self.model(positions, input_ids, cache, hidden_layers=hidden_layers)
+    if hidden_layers:
+      hidden, selected = hidden
+    logits = self.lm_head(hidden[-logits_to_keep:] if logits_to_keep else hidden)
+    if hidden_layers:
+      return logits, selected
+    return (logits, hidden) if return_hidden else logits
