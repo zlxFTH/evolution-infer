@@ -92,7 +92,9 @@ class Attention(nn.Module):
     q, k = self.rope(positions, q, k)
 
     if cache is not None:
-      k, v = cache.upd_kv_cache(self.layer_id, k, v)
+      cache.upd_kv_cache(self.layer_id, k, v)
+      end = cache.seq_len + seq_len
+      k, v = cache.k_cache[self.layer_id][: end], cache.v_cache[self.layer_id][: end]
 
     q = torch.transpose(q, 0, 1).unsqueeze(0)
     k = torch.transpose(k, 0, 1).unsqueeze(0)
@@ -122,26 +124,22 @@ class RMSNormGated(nn.Module):
     return (out * F.silu(gate.float())).to(x.dtype)
 
 class LinearAttention(nn.Module):
-  def __init__(self, layer_id: int, chunked_gdn: bool = False):
+  def __init__(self, layer_id: int):
     super().__init__()
 
     self.layer_id = layer_id
-    self.chunked_gdn = chunked_gdn
+    self.chunked_gdn = False
 
-    self.qk_dim   = linear_num_kq_heads * linear_head_dim
-    self.v_dim    = linear_num_v_heads * linear_head_dim
-    self.conv_dim = self.qk_dim * 2 + self.v_dim
-
-    self.in_proj_qkv = nn.Linear(hidden_size, self.conv_dim, bias=False)
+    self.in_proj_qkv = nn.Linear(hidden_size, conv_dim, bias=False)
     self.in_proj_a   = nn.Linear(hidden_size, linear_num_v_heads, bias=False)
     self.in_proj_b   = nn.Linear(hidden_size, linear_num_v_heads, bias=False)
-    self.in_proj_z   = nn.Linear(hidden_size, self.v_dim, bias=False)
+    self.in_proj_z   = nn.Linear(hidden_size, v_dim, bias=False)
 
     self.conv1d = nn.Conv1d(
-      in_channels=self.conv_dim,
-      out_channels=self.conv_dim,
+      in_channels=conv_dim,
+      out_channels=conv_dim,
       kernel_size=linear_num_kernel,
-      groups=self.conv_dim,
+      groups=conv_dim,
       padding=linear_num_kernel-1,
       bias=False,
     )
@@ -149,7 +147,7 @@ class LinearAttention(nn.Module):
     self.dt_bias  = nn.Parameter(torch.ones(linear_num_v_heads))
     self.A_log    = nn.Parameter(torch.zeros(linear_num_v_heads))
     self.norm     = RMSNormGated(linear_head_dim)
-    self.out_proj = nn.Linear(self.v_dim, hidden_size, bias=False)
+    self.out_proj = nn.Linear(v_dim, hidden_size, bias=False)
 
   def forward(self, x: torch.Tensor, cache: Cache | None):
     seq_len = x.shape[0]
@@ -159,16 +157,17 @@ class LinearAttention(nn.Module):
     a = self.in_proj_a(x)
     b = self.in_proj_b(x)
 
-    if cache is not None:
-      window = cache.upd_conv_cache(self.layer_id, qkv.transpose(0, 1))
-      if cache.is_prefill:
-        qkv = F.silu(self.conv1d(qkv.transpose(0, 1))[:, : seq_len]).transpose(0, 1)
-      else:
-        qkv = F.silu(F.conv1d(window, self.conv1d.weight, groups=self.conv_dim)).transpose(0, 1)
+    qkv_t = qkv.transpose(0, 1)
+    if cache is None or cache.is_prefill:
+      if cache is not None:
+        cache.upd_conv_cache(self.layer_id, qkv_t)
+      qkv = F.silu(self.conv1d(qkv_t)[:, : seq_len]).transpose(0, 1)
     else:
-      qkv = F.silu(self.conv1d(qkv.transpose(0, 1))[:, : seq_len]).transpose(0, 1)
+      window = torch.cat([cache.conv_state[self.layer_id], qkv_t], dim=1)
+      cache.upd_conv_cache(self.layer_id, qkv_t)
+      qkv = F.silu(F.conv1d(window, self.conv1d.weight, groups=conv_dim)).transpose(0, 1)
 
-    q, k, v = torch.split(qkv, [self.qk_dim, self.qk_dim, self.v_dim], dim=-1)
+    q, k, v = torch.split(qkv, [qk_dim, qk_dim, v_dim], dim=-1)
     q = q.reshape(seq_len, linear_num_kq_heads, -1)
     k = k.reshape(seq_len, linear_num_kq_heads, -1)
     v = v.reshape(seq_len, linear_num_v_heads, -1)
@@ -185,10 +184,10 @@ class LinearAttention(nn.Module):
     beta = b.sigmoid().float()
     g = -self.A_log.float().exp() * F.softplus(a.float() + self.dt_bias)
 
-    state = torch.zeros(
-      linear_num_v_heads, linear_head_dim, linear_head_dim,
-      dtype=torch.float32, device=x.device
-    ) if cache is None else cache.recur_state[self.layer_id]
+    state = (
+      torch.zeros(recur_shape, dtype=torch.float32, device=x.device)
+      if cache is None else cache.recur_state[self.layer_id]
+    )
 
     if self.chunked_gdn and seq_len >= 8:
       out, state = chunk_gated_delta(q, k, v, g, beta, state)
@@ -209,14 +208,14 @@ class LinearAttention(nn.Module):
     return self.out_proj(out.reshape(seq_len, -1))
 
 class DecoderBlock(nn.Module):
-  def __init__(self, id: int, chunked_gdn: bool = False):
+  def __init__(self, id: int):
     super().__init__()
 
     self.is_full = (id % block == 3)
     if self.is_full:
       self.self_attn = Attention(id)
     else:
-      self.linear_attn = LinearAttention(id, chunked_gdn)
+      self.linear_attn = LinearAttention(id)
 
     self.mlp = MLP()
     self.input_layernorm = RMSNorm()
@@ -239,10 +238,10 @@ class DecoderBlock(nn.Module):
     return x
 
 class Model(nn.Module):
-  def __init__(self, chunked_gdn: bool = False):
+  def __init__(self):
     super().__init__()
     self.embed_tokens = nn.Embedding(vocab_size, hidden_size)
-    self.layers = nn.ModuleList([DecoderBlock(i, chunked_gdn) for i in range(num_hidden_layers)])
+    self.layers = nn.ModuleList([DecoderBlock(i) for i in range(num_hidden_layers)])
     self.norm = RMSNorm()
 
   def forward(self, positions: torch.Tensor, input_ids: torch.Tensor, cache: Cache | None,
@@ -261,8 +260,12 @@ class Model(nn.Module):
 class LLM(nn.Module):
   def __init__(self, *, chunked_gdn: bool = False):
     super().__init__()
-    self.model = Model(chunked_gdn)
+    self.model = Model()
     self.lm_head = nn.Linear(hidden_size, vocab_size, bias=False)
+    if chunked_gdn:
+      for m in self.model.modules():
+        if isinstance(m, LinearAttention):
+          m.chunked_gdn = True
 
   def forward(self, positions: torch.Tensor, input_ids: torch.Tensor, cache: Cache | None,
               *, return_hidden: bool = False, logits_to_keep: int = 0,
