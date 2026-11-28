@@ -9,7 +9,7 @@ from .model import BLOCK_SIZE, HIDDEN_LAYERS, summarize_blocks
 
 @torch.inference_mode()
 def generate_copy_locator(
-  model, cache, locator, prompt_ids, max_new_tokens, eos_token_id=None, max_copy_len=None,
+  model, cache, locator, prompt_ids, max_new_tokens, eos_token_id=None,
   *, cot_end_ids=(), min_start_prob=0.6, stats=None,
 ):
   """返回新增 token。开启 CoT 时传入结束 CoT 的分隔 token 序列。"""
@@ -65,7 +65,6 @@ def generate_copy_locator(
 
   return generate_with_copy(
     model, cache, prompt_ids, max_new_tokens, eos_token_id,
-    max_new_tokens if max_copy_len is None else max_copy_len,
     propose=propose, commit=commit, hidden_layers=HIDDEN_LAYERS,
     min_copy_len=locator.min_copy, stats=stats,
   )

@@ -4,17 +4,21 @@ import torch.nn.functional as F
 
 from constant import *
 
+def mlp(in_dim, mid_dim, out_dim, dropout):
+  return nn.Sequential(
+    nn.Linear(in_dim, mid_dim),
+    nn.GELU(),
+    nn.Dropout(dropout),
+    nn.Linear(mid_dim, out_dim),
+  )
+
 class CopyGenHeads(nn.Module):
-  def __init__(self, dim=hidden_size, mid_dim=512):
+  def __init__(self, dim=hidden_size, dropout=0.1):
     super().__init__()
     in_dim = dim + 1
     self.ln = nn.LayerNorm(in_dim)
-    self.trigger_head = nn.Linear(in_dim, 2)
-    self.length_head = nn.Sequential(
-      nn.Linear(in_dim, mid_dim),
-      nn.SiLU(),
-      nn.Linear(mid_dim, 1),
-    )
+    self.trigger_head = mlp(in_dim, dim, 2, dropout)
+    self.length_head = mlp(in_dim, dim, 1, dropout)
 
   def features(self, hidden, match_len):
     hidden = hidden.to(self.ln.weight.dtype)

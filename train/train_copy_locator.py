@@ -10,7 +10,7 @@ import torch
 import torch.nn.functional as F
 
 from cache_copy_locator import DEFAULT_CACHE, cache_features, token_ids
-from train_copygen import ROOT, save_checkpoint
+from common import ROOT, save_checkpoint
 from copy_locator.candidates import MAX_CANDIDATES, StartIndex
 from copy_locator.model import BLOCK_SIZE, CopyLocator, summarize_blocks
 

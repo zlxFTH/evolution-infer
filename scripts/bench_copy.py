@@ -60,7 +60,6 @@ def main():
   parser.add_argument("--limit", type=int, default=8)
   parser.add_argument("--seed", type=int, default=42)
   parser.add_argument("--max-new-tokens", type=int, default=1024)
-  parser.add_argument("--max-copy-len", type=int, default=64)
   parser.add_argument("--min-start-prob", type=float, default=0.6)
   parser.add_argument("--cot", action=argparse.BooleanOptionalAction, default=None)
   parser.add_argument("--skip-ar", action="store_true")
@@ -115,7 +114,7 @@ def main():
         t0 = perf_counter()
         tokens = generate(
           model, cache, plugin, row["prompt_ids"], args.max_new_tokens,
-          eos_token_id=eos, max_copy_len=args.max_copy_len, stats=stats, **kwargs,
+          eos_token_id=eos, stats=stats, **kwargs,
         )
         torch.cuda.synchronize()
         elapsed = perf_counter() - t0
@@ -126,7 +125,7 @@ def main():
         cot_accepted = sum(max(0, min(cot_tokens - start, length)) for start, length in spans or ())
         row_result = {
           "task_id": row["id"], "domain": row["domain"], "mode": mode, "tokens": len(tokens), "seconds": elapsed,
-          "chunked_gdn": args.chunked_gdn, "max_copy_len": args.max_copy_len,
+          "chunked_gdn": args.chunked_gdn,
           "same_as_ar": tokens == outputs["ar"] if "ar" in outputs else None,
           "same_as_copygen": tokens == outputs["copygen"] if "copygen" in outputs else None,
           "stopped": bool(tokens) and tokens[-1] in stop_ids,

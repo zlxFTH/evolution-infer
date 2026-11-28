@@ -16,7 +16,7 @@ class DecodeStats:
 
 @torch.inference_mode()
 def generate_with_copy(
-  model, cache, prompt_ids, max_new_tokens, eos_token_id, max_copy_len,
+  model, cache, prompt_ids, max_new_tokens, eos_token_id=None,
   *, propose=None, commit=None, hidden_layers=(), min_copy_len=5, stats=None,
 ):
   if max_new_tokens <= 0:
@@ -49,18 +49,45 @@ def generate_with_copy(
 
   while len(history) - prompt_len < max_new_tokens:
     next_id = logits[-1].argmax().item()
-    budget = min(max_copy_len, max_new_tokens - (len(history) - prompt_len))
-    draft = propose(history, hidden, next_id, budget) if propose is not None and budget >= min_copy_len else []
-    draft = draft[:budget]
-    stop = next((i + 1 for i, token in enumerate(draft) if token in stop_ids), len(draft))
-    draft = draft[:stop]
-    can_verify = len(draft) >= min_copy_len and draft[0] == next_id
+    budget = max_new_tokens - (len(history) - prompt_len)
+    raw = propose(history, hidden, next_id, budget) if propose is not None and budget >= min_copy_len else []
+    raw_cands = raw if raw and isinstance(raw[0], list) else ([raw] if raw else [])
+    cands = []
+    for cand in raw_cands:
+      cand = cand[:budget]
+      stop = next((i + 1 for i, tok in enumerate(cand) if tok in stop_ids), len(cand))
+      cand = cand[:stop]
+      if len(cand) >= min_copy_len and cand[0] == next_id and cand not in cands:
+        cands.append(cand)
 
-    if can_verify:
-      snapshot = cache.snapshot()
-      trial_logits, trial_hidden = forward(draft, verify=True)
-      predicted = [next_id, *trial_logits[:-1].argmax(-1).tolist()]
-      accepted = next((i for i, pair in enumerate(zip(draft, predicted)) if pair[0] != pair[1]), len(draft))
+    if cands:
+      snapshot, owner = None, None
+      best_score = best = None
+      for idx, draft in enumerate(cands):
+        if len(draft) == 1:
+          ver_logits = logits[-1:]
+          predicted, accepted, trial = [next_id], 1, None
+        else:
+          if snapshot is None:
+            snapshot = cache.snapshot()
+          elif owner is not None:
+            cache.restore(snapshot)
+          trial_logits, trial_hidden = forward(draft, verify=True)
+          owner = idx
+          predicted = [next_id, *trial_logits[:-1].argmax(-1).tolist()]
+          accepted = next((i for i, pair in enumerate(zip(draft, predicted)) if pair[0] != pair[1]), len(draft))
+          ver_logits = torch.cat((logits[-1:], trial_logits[:max(0, accepted - 1)]))
+          trial = (trial_logits, trial_hidden)
+
+        top2 = ver_logits[:accepted].float().topk(min(2, ver_logits.size(-1)), dim=-1).values
+        margin_sum = (top2[:, 0] - top2[:, 1]).sum().item() if top2.size(-1) > 1 else top2[:, 0].sum().item()
+        lse = torch.logsumexp(ver_logits[:accepted].float(), dim=-1)
+        logprob_sum = (top2[:, 0] - lse).sum().item()
+        score = (accepted, margin_sum, logprob_sum, -idx)
+        if best_score is None or score > best_score:
+          best_score, best = score, (idx, draft, predicted, accepted, trial)
+
+      best_idx, draft, predicted, accepted, trial = best
       if stats is not None:
         stats.proposals += 1
         stats.drafted_tokens += len(draft)
@@ -68,11 +95,12 @@ def generate_with_copy(
         if stats.accepted_spans is not None:
           stats.accepted_spans.append((len(history) - prompt_len, accepted))
 
-      if accepted == len(draft):
-        emitted, logits, hidden = draft, trial_logits, trial_hidden
+      if accepted == len(draft) and owner == best_idx:
+        emitted, logits, hidden = draft, *trial
       else:
-        cache.restore(snapshot)
-        emitted = draft[:accepted] + [predicted[accepted]]
+        if owner is not None:
+          cache.restore(snapshot)
+        emitted = draft if accepted == len(draft) else draft[:accepted] + [predicted[accepted]]
         logits, hidden = forward(emitted)
     else:
       emitted = [next_id]

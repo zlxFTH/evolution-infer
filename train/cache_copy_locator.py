@@ -7,7 +7,7 @@ from tempfile import TemporaryDirectory
 
 import torch
 
-from train_copygen import ROOT, load_backbone
+from common import ROOT, load_backbone
 from copy_locator.model import HIDDEN_LAYERS
 
 DEFAULT_CACHE = ROOT / "tmp/copy_locator_hidden"
