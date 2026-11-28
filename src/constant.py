@@ -22,4 +22,4 @@ v_dim       = linear_num_v_heads * linear_head_dim
 conv_dim    = qk_dim * 2 + v_dim
 kv_shape    = (num_kv_heads, head_dim)
 conv_shape  = (conv_dim, linear_num_kernel - 1)
-recur_shape = (linear_num_v_heads, linear_head_dim, linear_head_dim) 
+recur_shape = (linear_num_v_heads, linear_head_dim, linear_head_dim)
