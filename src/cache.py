@@ -3,7 +3,7 @@ import torch
 from constant import *
 
 class Cache:
-  def __init__(self, max_len=max_positions):
+  def __init__(self, max_len):
     self.seq_len, self.is_prefill = 0, True
 
     def alloc(full, shape, dtype=torch.bfloat16):

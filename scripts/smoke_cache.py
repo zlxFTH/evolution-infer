@@ -101,7 +101,8 @@ def main():
       end = time.perf_counter()
       return outputs, end - beg
 
-    cache = Cache()
+    max_len = max(inputs[i]["token"].shape[0] for i in range(test_case)) * 2
+    cache = Cache(max_len)
     outputs_cache_off, t_off = bench("Cache Off", None)
     outputs_cache_on , t_on  = bench("Cache On", cache)
     check_correct(inputs, outputs_cache_off, outputs_cache_on)

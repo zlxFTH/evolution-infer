@@ -17,7 +17,7 @@ class DecodeStats:
 @torch.inference_mode()
 def generate_with_copy(
   model, cache, prompt_ids, max_new_tokens, eos_token_id, max_copy_len,
-  *, propose=None, commit=None, hidden_layers=(), calibrate=None, min_copy_len=5, stats=None,
+  *, propose=None, commit=None, hidden_layers=(), min_copy_len=5, stats=None,
 ):
   if max_new_tokens <= 0:
     return []
@@ -54,15 +54,12 @@ def generate_with_copy(
     draft = draft[:budget]
     stop = next((i + 1 for i, token in enumerate(draft) if token in stop_ids), len(draft))
     draft = draft[:stop]
-    can_verify = len(draft) >= min_copy_len and (calibrate is not None or draft[0] == next_id)
+    can_verify = len(draft) >= min_copy_len and draft[0] == next_id
 
     if can_verify:
       snapshot = cache.snapshot()
       trial_logits, trial_hidden = forward(draft, verify=True)
-      if calibrate is None:
-        predicted = [next_id, *trial_logits[:-1].argmax(-1).tolist()]
-      else:
-        predicted = calibrate(draft, logits[-1], hidden, trial_logits, trial_hidden)
+      predicted = [next_id, *trial_logits[:-1].argmax(-1).tolist()]
       accepted = next((i for i, pair in enumerate(zip(draft, predicted)) if pair[0] != pair[1]), len(draft))
       if stats is not None:
         stats.proposals += 1

@@ -92,11 +92,7 @@ def main():
   rng = random.Random(42)
   backbone = load_backbone(args.model)
   heads = CopyGenHeads(backbone.config.hidden_size).to("cuda")
-  # 无损模式仅训练 trigger 和 length。将可选校准头初始化为零偏置。
-  heads.calib_head.requires_grad_(False)
-  torch.nn.init.zeros_(heads.calib_head[-1].weight)
-  torch.nn.init.zeros_(heads.calib_head[-1].bias)
-  params = [p for p in heads.parameters() if p.requires_grad]
+  params = list(heads.parameters())
   optimizer = torch.optim.AdamW(params, lr=args.lr)
   steps = args.epochs * math.ceil(len(examples) / args.grad_accum)
   schedule = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, steps)
